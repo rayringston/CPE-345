@@ -30,7 +30,7 @@ Source::~Source() {
 }
 
 void Source::initialize() {
-    timeout = 1.0;  // Time between sending packets (1s)
+    timeout = exponential(par("interArrivalTime").doubleValue());  // Time between sending packets (1s)
     limit = par("limit");  // Total number of packets to send
     timeoutEvent = new cMessage("timeoutEvent");
 
@@ -43,8 +43,8 @@ void Source::handleMessage(cMessage *msg) {
         if (sentCount < limit) {
             cPacket *pkt = new cPacket("packet");
 
-            int size = intuniform(1, 160); // sms text messages can be anywhere between 1 and 160 bytes
-            pkt->setBitLength(size * 8);
+            int size = intuniform(1, 160); // sms text messages can be anywhere between 1 and 160 chars
+            pkt->setBitLength(size * 7); // each character is 7 bits
             pkt->setTimestamp();
 
             EV << "Sending packet " << sentCount + 1 << " of " << limit << "\n";
@@ -59,6 +59,8 @@ void Source::handleMessage(cMessage *msg) {
 
             // Schedule the next packet after the timeout
             scheduleAt(simTime() + timeout, timeoutEvent);
+
+            delete pkt;
         } else {
             EV << "Reached packet limit. Ending simulation.\n";
             endSimulation();
@@ -71,6 +73,7 @@ class User : public cSimpleModule {
   private:
     cStdDev delayStat;
     cHistogram delayHist;
+    int droppedCount = 0;
 
   protected:
     virtual void handleMessage(cMessage *msg) override;
@@ -86,6 +89,7 @@ void User::handleMessage(cMessage *msg) {
     if (pkt->hasBitError()) {
         EV << "Packet lost due to bit error.\n";
         bubble("Packet dropped");
+        droppedCount++;
         delete pkt;
     } else {
         // Calculate delay and collect statistics
@@ -101,6 +105,9 @@ void User::handleMessage(cMessage *msg) {
 }
 
 void User::finish() {
+    EV << "Dropped Packets: " << droppedCount << "\n";
+
+    recordScalar("Dropped packets", droppedCount);
     recordScalar("Mean delay", delayStat.getMean());
     recordScalar("Stddev", delayStat.getStddev());
     recordScalar("Variance", delayStat.getVariance());
@@ -135,7 +142,7 @@ void Sink::handleMessage(cMessage *msg) {
 
 void Sink::finish() {
     recordScalar("Mean delay", delayStat.getMean());
-    recordScalar("Stddev", delayStat.getStddev());
+    recordScalar("Std Dev.", delayStat.getStddev());
     recordScalar("Variance", delayStat.getVariance());
     delayHist.record();
 }
